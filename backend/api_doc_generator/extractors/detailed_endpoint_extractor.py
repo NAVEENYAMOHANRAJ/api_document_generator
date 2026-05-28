@@ -38,6 +38,21 @@ class DetailedEndpointExtractor:
             Enhanced endpoint with detailed metadata
         """
         enhanced = endpoint.copy()
+
+        # If middleware was detected at route-level, translate it into a minimal security hint.
+        # (Source-grounded: we only report what appears in code.)
+        if enhanced.get("middleware") and not enhanced.get("security"):
+            mw = [str(m) for m in (enhanced.get("middleware") or [])]
+            auth_like = [m for m in mw if re.search(r"\bauth\b|sanctum|jwt|passport|token", m, re.IGNORECASE)]
+            if auth_like:
+                enhanced["security"] = [
+                    {
+                        "middleware": auth_like,
+                        "detection_type": "route_middleware",
+                        "source_file": (enhanced.get("source") or {}).get("file") or enhanced.get("source_file"),
+                        "line_number": (enhanced.get("source") or {}).get("line"),
+                    }
+                ]
         
         # Extract handler details if available
         if endpoint.get("handler") and endpoint["handler"].get("class"):
@@ -80,6 +95,11 @@ class DetailedEndpointExtractor:
                 )
                 if auth:
                     enhanced["security"] = auth
+                else:
+                    # Fallback: controller-level middleware declarations like $this->middleware('auth')
+                    controller_auth = self._extract_controller_middleware_auth(handler_file)
+                    if controller_auth:
+                        enhanced["security"] = controller_auth
                 
                 # Extract query parameters
                 query_params = self._extract_query_parameters(
@@ -125,6 +145,39 @@ class DetailedEndpointExtractor:
                 enhanced["queryParameters"] = query_from_path
         
         return enhanced
+
+    def _extract_controller_middleware_auth(self, controller_file: str) -> Optional[List[Dict[str, Any]]]:
+        content = self._read_file(controller_file)
+        if not content:
+            return None
+        # $this->middleware('auth'); OR $this->middleware(['auth', 'verified']);
+        single_matches = list(re.finditer(r"\$this->middleware\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", content, re.IGNORECASE))
+        arr_matches = list(re.finditer(r"\$this->middleware\s*\(\s*\[(.*?)\]\s*\)", content, re.IGNORECASE | re.DOTALL))
+        values: List[str] = []
+        line_number: Optional[int] = None
+        if single_matches:
+            line_number = content[: single_matches[0].start()].count("\n") + 1
+        for m in single_matches:
+            v = (m.group(1) or "").strip()
+            if v:
+                values.append(v)
+        if arr_matches and line_number is None:
+            line_number = content[: arr_matches[0].start()].count("\n") + 1
+        for m in arr_matches:
+            chunk = m.group(1) or ""
+            values.extend([x.strip().strip("'\"") for x in chunk.split(",") if x.strip()])
+        auth_like = [m for m in values if re.search(r"\bauth\b|sanctum|jwt|passport|token", m, re.IGNORECASE)]
+        if not auth_like:
+            return None
+        return [
+            {
+                "controller_middleware": auth_like,
+                "source": "controller",
+                "detection_type": "controller_middleware",
+                "source_file": controller_file,
+                "line_number": line_number,
+            }
+        ]
 
     def _find_controller_file(
         self,
@@ -187,7 +240,9 @@ class DetailedEndpointExtractor:
                 "properties": validation_schema,
                 "required": list(validation_schema.keys()),
                 "source": "validation_rules",
-                "confidence": 0.85
+                "confidence": 0.85,
+                "detection_type": "validation_rules",
+                "source_file": controller_file,
             }
         
         # Only POST/PUT/PATCH typically have request bodies
@@ -561,7 +616,10 @@ class DetailedEndpointExtractor:
             return self.file_cache[file_path]
         
         try:
-            content = Path(file_path).read_text(encoding='utf-8', errors='ignore')
+            p = Path(file_path)
+            if not p.is_absolute():
+                p = (self.repo_path / p).resolve()
+            content = p.read_text(encoding='utf-8', errors='ignore')
             self.file_cache[file_path] = content
             return content
         except Exception:

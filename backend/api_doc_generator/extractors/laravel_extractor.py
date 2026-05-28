@@ -131,7 +131,8 @@ class LaravelExtractor:
     def _extract_grouped_routes(self, content: str) -> None:
         """Extract Route::group() with context stacking - only top-level groups."""
         # Find all Route::group( patterns
-        pattern = r"Route::group\s*\(\s*\[(.*?)\]\s*,\s*function\s*\(\s*\)\s*\{"
+        # Laravel commonly uses closures with parameters: function () {}, function ($router) {}
+        pattern = r"Route::group\s*\(\s*\[(.*?)\]\s*,\s*function\s*\(\s*[^)]*\)\s*\{"
         
         matches = list(re.finditer(pattern, content, re.IGNORECASE))
         
@@ -197,7 +198,7 @@ class LaravelExtractor:
                 self.namespace_stack.pop()
         
         # Pattern 2: Route::middleware('auth:api')->group(function() { ... })
-        middleware_pattern = r"Route::middleware\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*->\s*group\s*\(\s*function\s*\(\s*\)\s*\{"
+        middleware_pattern = r"Route::middleware\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*->\s*group\s*\(\s*function\s*\(\s*[^)]*\)\s*\{"
         middleware_matches = list(re.finditer(middleware_pattern, content, re.IGNORECASE))
         
         # Filter to only top-level middleware groups
@@ -239,7 +240,7 @@ class LaravelExtractor:
             self.middleware_stack.pop()
 
         # Pattern 3: Route::prefix('v1')->group(function () { ... })
-        prefix_pattern = r"Route::prefix\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*->\s*group\s*\(\s*function\s*\(\s*\)\s*\{"
+        prefix_pattern = r"Route::prefix\s*\(\s*['\"]([^'\"]+)['\"]\s*\)\s*->\s*group\s*\(\s*function\s*\(\s*[^)]*\)\s*\{"
         for match in re.finditer(prefix_pattern, content, re.IGNORECASE):
             prefix = match.group(1)
             group_content = self._extract_brace_content(content, match.end() - 1)

@@ -18,6 +18,7 @@ from api_doc_generator.models.endpoint_models import EndpointExtractionResult
 from api_doc_generator.scanner.backend_detector import BackendFileDetector, FrameworkCandidateDetector
 from api_doc_generator.extractors.extraction_pipeline import ExtractionPipeline
 from api_doc_generator.extractors.openapi_spec_extractor import OpenAPISpecExtractor
+from api_doc_generator.extractors.detailed_endpoint_extractor import DetailedEndpointExtractor
 from api_doc_generator.generators.documentation_generator import DocumentationGenerator
 from api_doc_generator.generators.openapi_generator import OpenAPIGenerator
 from api_doc_generator.services.llm_enhancer import LLMDocumentationEnhancer
@@ -53,7 +54,15 @@ def _merge_spec_and_code_endpoints(spec_endpoints, code_endpoints):
     return merged, duplicates_removed
 
 
-def _generate_extraction_result(source_name, tree_entries, file_contents, initial_errors=None, tree_truncated=False, progress_callback=None):
+def _generate_extraction_result(
+    source_name,
+    tree_entries,
+    file_contents,
+    initial_errors=None,
+    tree_truncated=False,
+    progress_callback=None,
+    repo_root: Optional[str] = None,
+):
     """Run spec/code extraction for already-loaded source files."""
     if progress_callback:
         progress_callback({"stage": "repository_scan", "progress": 10})
@@ -109,6 +118,20 @@ def _generate_extraction_result(source_name, tree_entries, file_contents, initia
         progress_callback({"stage": "schema_resolution", "progress": 75})
 
     endpoints, spec_duplicates_removed = _merge_spec_and_code_endpoints(spec_endpoints, endpoints)
+
+    # Laravel deep extraction (controller middleware, FormRequest validation, response resources, headers, etc.)
+    # Only runs when we have a real repo_root on disk.
+    try:
+        if repo_root:
+            framework_candidates = FrameworkCandidateDetector.detect(backend_file_entries, content_by_path)
+            if any("Laravel" in str(f) for f in (framework_candidates or [])):
+                if progress_callback:
+                    progress_callback({"stage": "laravel_deep_extraction", "progress": 72})
+                repo_files = list(content_by_path.keys())
+                deep = DetailedEndpointExtractor(repo_root)
+                endpoints = [deep.extract_endpoint_details(ep, repo_files) for ep in endpoints]
+    except Exception as exc:
+        errors.append({"file": "laravel_deep_extraction", "error": str(exc)})
 
     documentation_summary = {
         "endpoints_with_path_params": sum(1 for endpoint in endpoints if endpoint.get("path_params")),
@@ -344,6 +367,7 @@ def run_extraction_background(job_id: str, source_type: str, source_path_or_url:
             initial_errors=read_errors,
             tree_truncated=tree_truncated,
             progress_callback=progress_callback,
+            repo_root=str(repo_path) if source_type == "github" else (source_path_or_url if source_type == "local_folder" else None),
         )
 
         endpoints = result.get("endpoints", [])
@@ -472,6 +496,7 @@ def extract_local_folder(
                 tree_entries=tree_entries,
                 file_contents=file_contents,
                 initial_errors=read_errors,
+                repo_root=request.folder_path,
             )
 
         repo_name = Path(request.folder_path).name

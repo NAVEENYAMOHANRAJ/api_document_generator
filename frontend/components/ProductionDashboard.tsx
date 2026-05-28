@@ -3,15 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, API_ORIGIN } from "@/lib/apiBase";
 import RepositoryForm from "@/components/RepositoryForm";
-import ScanResults from "@/components/ScanResults";
-import EndpointsList from "@/components/EndpointsList";
-import EndpointDetailPanel from "@/components/EndpointDetailPanel";
-import ProjectDocOverview from "@/components/ProjectDocOverview";
+import SmartShell from "@/components/smart/SmartShell";
+import EndpointSidebar from "@/components/smart/EndpointSidebar";
+import TryItOutRail from "@/components/smart/TryItOutRail";
+import SmartEndpointTabs from "@/components/smart/SmartEndpointTabs";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 
 type JobStatus = "pending" | "processing" | "completed" | "failed";
 
@@ -101,7 +97,6 @@ export default function ProductionDashboard() {
   const [error, setError] = useState<string>("");
 
   const [search, setSearch] = useState("");
-  const [method, setMethod] = useState<string>("ALL");
 
   const pollRef = useRef<number | null>(null);
 
@@ -285,12 +280,11 @@ export default function ProductionDashboard() {
     const q = search.trim().toLowerCase();
     return endpoints.filter((ep) => {
       const m = String(ep?.method || "").toUpperCase();
-      if (method !== "ALL" && m !== method) return false;
       if (!q) return true;
       const hay = `${m} ${ep?.path || ""} ${ep?.source_file || ""} ${ep?.function_name || ""} ${ep?.description || ""}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [endpoints, method, search]);
+  }, [endpoints, search]);
 
   const docs = job?.documentation;
   const openapi = docs?.openapi_spec || null;
@@ -303,205 +297,94 @@ export default function ProductionDashboard() {
     "http://localhost:8000";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-6 py-6 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-950">API Documentation Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-600">
-              Source-grounded extraction with provenance, confidence, and exports.
-            </p>
+    <SmartShell>
+      <EndpointSidebar
+        endpoints={filteredEndpoints}
+        search={search}
+        onSearch={setSearch}
+        selectedKey={selectedKey}
+        onSelect={(ep, key) => {
+          setSelectedEndpoint(ep);
+          setSelectedKey(key);
+        }}
+      />
+
+      <main className="flex min-w-0 flex-1 flex-col">
+        <div className="sticky top-0 z-30 border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+          <div className="flex items-center justify-between gap-3 px-6 py-4">
+            <div>
+              <div className="text-sm font-semibold text-slate-100">API Dashboard</div>
+              <div className="text-xs text-slate-400">
+                {job?.job?.repo_name ? `Repo: ${job.job.repo_name}` : "Load a repo to extract endpoints"}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {job?.job?.status ? (
+                <span className="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-200 ring-1 ring-slate-800">
+                  {job.job.status}
+                </span>
+              ) : (
+                <span className="rounded-full bg-slate-900 px-3 py-1 text-xs text-slate-400 ring-1 ring-slate-800">
+                  idle
+                </span>
+              )}
+              {docs?.openapi_spec ? (
+                <Button
+                  variant="outline"
+                  className="border-slate-700 bg-slate-950 text-slate-100 hover:bg-slate-900"
+                  onClick={() =>
+                    downloadBlob(JSON.stringify(docs.openapi_spec, null, 2), "openapi.json", "application/json")
+                  }
+                >
+                  Export JSON
+                </Button>
+              ) : null}
+              {docs?.markdown_doc ? (
+                <Button
+                  variant="outline"
+                  className="border-slate-700 bg-slate-950 text-slate-100 hover:bg-slate-900"
+                  onClick={() => downloadBlob(docs.markdown_doc || "", "api-docs.md", "text/markdown")}
+                >
+                  Export MD
+                </Button>
+              ) : null}
+              {docs?.html_doc ? (
+                <Button
+                  variant="outline"
+                  className="border-slate-700 bg-slate-950 text-slate-100 hover:bg-slate-900"
+                  onClick={() => downloadBlob(docs.html_doc || "", "api-docs.html", "text/html")}
+                >
+                  Export HTML
+                </Button>
+              ) : null}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {job?.job?.status ? (
-              <Badge className="bg-slate-900 text-white">{job.job.status}</Badge>
-            ) : (
-              <Badge variant="secondary">idle</Badge>
-            )}
-            {jobId ? <Badge variant="secondary">job: {jobId.slice(0, 8)}</Badge> : null}
+
+          <div className="px-6 pb-4">
+            <RepositoryForm
+              onScan={onScan}
+              onExtract={onExtract}
+              onExtractLocalFolder={onExtractLocalFolder}
+              onExtractUpload={onExtractUpload}
+              onCancel={onCancel}
+              loading={loading || (!!jobId && (job?.job?.status === "processing" || job?.job?.status === "pending"))}
+              loadingLabel={loadingLabel || (job?.job?.status === "processing" ? "Processing…" : undefined)}
+            />
+            {error ? (
+              <div className="mt-4 rounded-lg border border-rose-800 bg-rose-950/40 p-3 text-sm text-rose-200">
+                {error}
+              </div>
+            ) : null}
           </div>
         </div>
-      </div>
 
-      <div className="mx-auto max-w-7xl px-6 py-8 space-y-6">
-        <RepositoryForm
-          onScan={onScan}
-          onExtract={onExtract}
-          onExtractLocalFolder={onExtractLocalFolder}
-          onExtractUpload={onExtractUpload}
-          onCancel={onCancel}
-          loading={loading || (!!jobId && (job?.job?.status === "processing" || job?.job?.status === "pending"))}
-          loadingLabel={loadingLabel || (job?.job?.status === "processing" ? "Processing…" : undefined)}
-        />
+        <div className="min-w-0 flex-1 p-6">
+          <SmartEndpointTabs endpoint={selectedEndpoint} openapi={openapi} baseUrl={baseUrl} />
+        </div>
+      </main>
 
-        {error ? (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
-            {error}
-          </div>
-        ) : null}
-
-        {scan ? <ScanResults results={scan} /> : null}
-
-        {job ? (
-          <Tabs defaultValue="endpoints">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="endpoints">Endpoints</TabsTrigger>
-              <TabsTrigger value="metrics">Metrics</TabsTrigger>
-              <TabsTrigger value="exports">Exports</TabsTrigger>
-              <TabsTrigger value="raw">Raw</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="endpoints" className="space-y-4">
-              {endpoints.length === 0 ? (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-                  No endpoints in the current result yet. Use <strong>Generate API Docs</strong> (not only Scan Repository),
-                  then wait for job status <strong>completed</strong>.
-                </div>
-              ) : null}
-              <Card>
-                <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <CardTitle>Endpoint Catalog</CardTitle>
-                    <div className="mt-1 text-sm text-slate-600">
-                      {filteredEndpoints.length} shown / {endpoints.length} total
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <Input
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      placeholder="Search path, handler, file…"
-                      className="sm:w-[320px]"
-                    />
-                    <select
-                      value={method}
-                      onChange={(e) => setMethod(e.target.value)}
-                      className="h-10 rounded-md border border-slate-300 bg-white px-3 text-sm"
-                    >
-                      {methods.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    <div>
-                      <ProjectDocOverview
-                        endpoints={endpoints as any[]}
-                        jobMetadata={jobMeta}
-                        documentationSummary={(jobMeta?.documentation_summary || null) as any}
-                      />
-                      <EndpointsList
-                        endpoints={filteredEndpoints}
-                        selectedKey={selectedKey}
-                        onSelect={(ep, key) => {
-                          setSelectedEndpoint(ep);
-                          setSelectedKey(key);
-                        }}
-                      />
-                    </div>
-                    <div>
-                      <EndpointDetailPanel
-                        endpoint={selectedEndpoint}
-                        openapi={openapi}
-                        jobMetadata={jobMeta}
-                        baseUrl={baseUrl}
-                      />
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="metrics" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Extraction Metrics</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-                    <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="text-xs text-slate-500">Total endpoints</div>
-                      <div className="mt-1 text-2xl font-bold text-slate-950">
-                        {job.job.total_endpoints ?? endpoints.length}
-                      </div>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="text-xs text-slate-500">Processed files</div>
-                      <div className="mt-1 text-2xl font-bold text-slate-950">{job.job.processed_files}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="text-xs text-slate-500">Failed files</div>
-                      <div className="mt-1 text-2xl font-bold text-slate-950">{job.job.failed_files}</div>
-                    </div>
-                    <div className="rounded-lg border border-slate-200 bg-white p-4">
-                      <div className="text-xs text-slate-500">Status</div>
-                      <div className="mt-1 text-2xl font-bold text-slate-950">{job.job.status}</div>
-                    </div>
-                  </div>
-
-                  {extractionResult ? <ScanResults results={extractionResult} /> : null}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="exports" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Exports</CardTitle>
-                </CardHeader>
-                <CardContent className="flex flex-wrap gap-3">
-                  <Button
-                    disabled={!docs?.openapi_spec}
-                    onClick={() =>
-                      downloadBlob(
-                        JSON.stringify(docs?.openapi_spec, null, 2),
-                        "openapi.json",
-                        "application/json"
-                      )
-                    }
-                  >
-                    Download OpenAPI JSON
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={!docs?.markdown_doc}
-                    onClick={() =>
-                      downloadBlob(docs?.markdown_doc || "", "api-docs.md", "text/markdown")
-                    }
-                  >
-                    Download Markdown
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={!docs?.html_doc}
-                    onClick={() => downloadBlob(docs?.html_doc || "", "api-docs.html", "text/html")}
-                  >
-                    Download HTML
-                  </Button>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="raw" className="space-y-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Raw Job JSON</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <pre className="max-h-[520px] overflow-auto rounded-lg border border-slate-200 bg-slate-950 p-4 text-xs text-slate-100">
-                    {JSON.stringify(job, null, 2)}
-                  </pre>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
-        ) : null}
-      </div>
-    </div>
+      <TryItOutRail endpoint={selectedEndpoint} baseUrl={baseUrl} />
+    </SmartShell>
   );
 }
 
